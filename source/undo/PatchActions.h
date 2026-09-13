@@ -4,6 +4,7 @@
 #include "../model/Patch.h"
 #include "../model/ModuleDescriptions.h"
 #include "../model/ModulePlacement.h"
+#include "../model/ModuleReplacement.h"
 #include "../model/SnipFileIO.h"
 #include "../midi/ConnectionManager.h"
 #include "../sync/PatchSynchronizer.h"
@@ -374,6 +375,305 @@ private:
     std::vector<MorphAssignment> stashedMorphs_;
     std::vector<std::pair<int, KnobAssignment>> stashedKnobs_;
     std::vector<CtrlAssignment> stashedCtrls_;
+};
+
+// ============================================================================
+// ReplaceModuleAction - swap a module for another of its family in place,
+// keeping its position, its name if it was given one, the cables and
+// parameters ModuleReplacement::plan carries over, and the knob, morph and
+// MIDI CC assignments on parameters that still exist.
+// ============================================================================
+class ReplaceModuleAction : public juce::UndoableAction
+{
+public:
+    ReplaceModuleAction(UndoContext& ctx, int section, Module* module, int newTypeId)
+        : ctx_(ctx), section_(section), newTypeId_(newTypeId)
+    {
+        index_ = module->getContainerIndex();
+        oldTypeId_ = module->getDescriptor()->index;
+        title_ = module->getTitle();
+        position_ = module->getPosition();
+        for (auto& p : module->getParameters())
+            oldValues_.push_back(p.getValue());
+
+        for (auto& ma : ctx_.patch.morphAssignments)
+            if (ma.section == section_ && ma.module == index_)
+                oldMorphs_.push_back(ma);
+        for (int k = 0; k < 23; ++k)
+        {
+            const auto& ka = ctx_.patch.knobAssignments[static_cast<size_t>(k)];
+            if (ka.assigned && ka.section == section_ && ka.module == index_)
+                oldKnobs_.push_back({ k, ka });
+        }
+        for (auto& ca : ctx_.patch.ctrlAssignments)
+            if (ca.section == section_ && ca.module == index_)
+                oldCtrls_.push_back(ca);
+
+        auto& container = ctx_.patch.getContainer(section_);
+        std::vector<ModuleReplacement::ConnectorRef> used;
+        for (auto& conn : container.getConnections())
+        {
+            StashedConnection sc {};
+            if (!describeEnd(container, conn.output, sc.outModIndex, sc.outConnIndex, sc.outIsOutput)
+                || !describeEnd(container, conn.input, sc.inModIndex, sc.inConnIndex, sc.inIsOutput))
+                continue;
+            if (sc.outModIndex != index_ && sc.inModIndex != index_)
+                continue;
+            sc.color = conn.output->getDescriptor()->signalType;
+            oldCables_.push_back(sc);
+            if (sc.outModIndex == index_) used.push_back({ sc.outConnIndex, sc.outIsOutput });
+            if (sc.inModIndex == index_)  used.push_back({ sc.inConnIndex, sc.inIsOutput });
+        }
+
+        if (auto* newDesc = ctx_.descs.getModuleByIndex(newTypeId_))
+            plan_ = ModuleReplacement::plan(*module->getDescriptor(), *newDesc, used);
+
+        for (auto& sc : oldCables_)
+        {
+            int outIndex = sc.outConnIndex, inIndex = sc.inConnIndex;
+            bool outIsOutput = sc.outIsOutput, inIsOutput = sc.inIsOutput;
+            if (!mapEnd(sc.outModIndex, outIndex, outIsOutput) || !mapEnd(sc.inModIndex, inIndex, inIsOutput))
+                ++droppedCables_;
+        }
+        for (auto& ma : oldMorphs_) if (!plan_.mapParameter(ma.param)) ++droppedAssignments_;
+        for (auto& [k, ka] : oldKnobs_) if (!plan_.mapParameter(ka.param)) ++droppedAssignments_;
+        for (auto& ca : oldCtrls_) if (!plan_.mapParameter(ca.param)) ++droppedAssignments_;
+    }
+
+    // Known before perform(), which is how the caller can say what was lost.
+    int getDroppedCables() const { return droppedCables_; }
+    int getKeptCables() const { return static_cast<int>(oldCables_.size()) - droppedCables_; }
+    int getDroppedAssignments() const { return droppedAssignments_; }
+    int getKeptParameters() const { return static_cast<int>(plan_.parameters.size()); }
+
+    bool perform() override
+    {
+        const auto* oldDesc = ctx_.descs.getModuleByIndex(oldTypeId_);
+        const auto* newDesc = ctx_.descs.getModuleByIndex(newTypeId_);
+        auto& container = ctx_.patch.getContainer(section_);
+        auto* old = container.getModuleByIndex(index_);
+        if (!oldDesc || !newDesc || !old || old->getDescriptor()->index != oldTypeId_)
+            return false;
+        if (!container.canAdd(*newDesc))
+            return false;
+        // A taller module pushes what is below it down the column, which the
+        // column may not have room for: refuse before anything has changed.
+        if (!canMakeRoomForModule(container, section_, position_.x, position_.y, newDesc->height,
+                                  { index_ }, &ctx_.patch.getComments()))
+            return false;
+
+        // Suppressed and synced by one full upload, as a delete is.
+        SyncSuppressor guard(ctx_.syncPtr);
+        freePanelLights();
+
+        auto& morphs = ctx_.patch.morphAssignments;
+        for (auto it = morphs.begin(); it != morphs.end();)
+        {
+            if (it->section != section_ || it->module != index_) { ++it; continue; }
+            if (auto mapped = plan_.mapParameter(it->param)) { it->param = *mapped; ++it; }
+            else it = morphs.erase(it);
+        }
+        for (auto& ka : ctx_.patch.knobAssignments)
+        {
+            if (!ka.assigned || ka.section != section_ || ka.module != index_) continue;
+            if (auto mapped = plan_.mapParameter(ka.param)) ka.param = *mapped;
+            else ka.assigned = false;
+        }
+        auto& ctrls = ctx_.patch.ctrlAssignments;
+        for (auto it = ctrls.begin(); it != ctrls.end();)
+        {
+            if (it->section != section_ || it->module != index_) { ++it; continue; }
+            if (auto mapped = plan_.mapParameter(it->param)) { it->param = *mapped; ++it; }
+            else it = ctrls.erase(it);
+        }
+
+        container.removeModule(old);
+        pushed_ = makeRoomForModule(container, section_, position_.x, position_.y, newDesc->height,
+                                    {}, &ctx_.patch.getComments());
+
+        auto module = Module::createFromDescriptor(*newDesc);
+        module->setContainerIndex(index_);
+        module->setPosition(position_);
+        // A name the user chose stays; a default name follows the new type.
+        const bool defaultName = title_ == oldDesc->name || title_ == oldDesc->fullname;
+        module->setTitle(defaultName ? newDesc->name : title_);
+
+        for (auto& [oldIndex, newIndex] : plan_.parameters)
+            if (auto* p = module->getParameter(newIndex))
+                p->setValue(oldValueOf(*oldDesc, oldIndex));
+        for (auto& ma : morphs)
+            if (ma.section == section_ && ma.module == index_)
+                if (auto* p = module->getParameter(ma.param))
+                {
+                    p->setMorphGroup(ma.morph);
+                    p->setMorphRange(ma.range);
+                }
+        container.addModule(std::move(module));
+
+        for (auto& sc : oldCables_)
+        {
+            int outIndex = sc.outConnIndex, inIndex = sc.inConnIndex;
+            bool outIsOutput = sc.outIsOutput, inIsOutput = sc.inIsOutput;
+            if (!mapEnd(sc.outModIndex, outIndex, outIsOutput) || !mapEnd(sc.inModIndex, inIndex, inIsOutput))
+                continue;
+            auto* outMod = container.getModuleByIndex(sc.outModIndex);
+            auto* inMod = container.getModuleByIndex(sc.inModIndex);
+            auto* outConn = outMod ? outMod->getConnector(outIndex, outIsOutput) : nullptr;
+            auto* inConn = inMod ? inMod->getConnector(inIndex, inIsOutput) : nullptr;
+            if (!outConn || !inConn)
+                continue;
+            // Two connectors that end up on one net must not bring two outputs together.
+            auto* driverA = container.findNetOutput(outConn);
+            auto* driverB = container.findNetOutput(inConn);
+            if (driverA && driverB && driverA != driverB)
+                continue;
+            container.addConnection(outConn, inConn);
+        }
+
+        ctx_.repaint();
+        if (ctx_.syncToSynth) ctx_.syncToSynth();
+        return true;
+    }
+
+    bool undo() override
+    {
+        const auto* oldDesc = ctx_.descs.getModuleByIndex(oldTypeId_);
+        auto& container = ctx_.patch.getContainer(section_);
+        auto* current = container.getModuleByIndex(index_);
+        if (!oldDesc || !current)
+            return false;
+
+        SyncSuppressor guard(ctx_.syncPtr);
+        freePanelLights();
+
+        auto& morphs = ctx_.patch.morphAssignments;
+        morphs.erase(std::remove_if(morphs.begin(), morphs.end(), [this](const MorphAssignment& ma) {
+            return ma.section == section_ && ma.module == index_;
+        }), morphs.end());
+        for (auto& ka : ctx_.patch.knobAssignments)
+            if (ka.assigned && ka.section == section_ && ka.module == index_)
+                ka.assigned = false;
+        auto& ctrls = ctx_.patch.ctrlAssignments;
+        ctrls.erase(std::remove_if(ctrls.begin(), ctrls.end(), [this](const CtrlAssignment& ca) {
+            return ca.section == section_ && ca.module == index_;
+        }), ctrls.end());
+
+        container.removeModule(current);
+        restorePushedModules(ctx_.patch, pushed_);
+        pushed_.clear();
+
+        auto module = Module::createFromDescriptor(*oldDesc);
+        module->setContainerIndex(index_);
+        module->setPosition(position_);
+        module->setTitle(title_);
+        auto& params = module->getParameters();
+        for (size_t i = 0; i < params.size() && i < oldValues_.size(); ++i)
+            params[i].setValue(oldValues_[i]);
+        for (auto& ma : oldMorphs_)
+            if (auto* p = module->getParameter(ma.param))
+            {
+                p->setMorphGroup(ma.morph);
+                p->setMorphRange(ma.range);
+            }
+        container.addModule(std::move(module));
+
+        for (auto& sc : oldCables_)
+        {
+            auto* outMod = container.getModuleByIndex(sc.outModIndex);
+            auto* inMod = container.getModuleByIndex(sc.inModIndex);
+            auto* outConn = outMod ? outMod->getConnector(sc.outConnIndex, sc.outIsOutput) : nullptr;
+            auto* inConn = inMod ? inMod->getConnector(sc.inConnIndex, sc.inIsOutput) : nullptr;
+            if (outConn && inConn)
+                container.addConnection(outConn, inConn);
+        }
+
+        for (auto& ma : oldMorphs_)
+            morphs.push_back(ma);
+        // Knob and CC lights come back with the upload's replay of the
+        // assignments (ConnectionManager::replayPanelAssignments), as in a delete's undo.
+        for (auto& [k, ka] : oldKnobs_)
+            ctx_.patch.knobAssignments[static_cast<size_t>(k)] = ka;
+        for (auto& ca : oldCtrls_)
+            ctrls.push_back(ca);
+
+        ctx_.repaint();
+        if (ctx_.onModuleRestored) ctx_.onModuleRestored(section_, index_);
+        if (ctx_.syncToSynth) ctx_.syncToSynth();
+        return true;
+    }
+
+    int getSizeInUnits() override { return 1; }
+
+private:
+    static bool describeEnd(ModuleContainer& container, const Connector* connector,
+                            int& moduleIndex, int& connectorIndex, bool& isOutput)
+    {
+        for (auto& m : container.getModules())
+            for (auto& c : m->getConnectors())
+                if (&c == connector)
+                {
+                    moduleIndex = m->getContainerIndex();
+                    connectorIndex = c.getDescriptor()->index;
+                    isOutput = c.getDescriptor()->isOutput;
+                    return true;
+                }
+        return false;
+    }
+
+    // Rewrites one cable end if it is on the replaced module; false when that
+    // end has nowhere to go.
+    bool mapEnd(int moduleIndex, int& connectorIndex, bool& isOutput) const
+    {
+        if (moduleIndex != index_)
+            return true;
+        const auto mapped = plan_.mapConnector({ connectorIndex, isOutput });
+        if (!mapped)
+            return false;
+        connectorIndex = mapped->index;
+        isOutput = mapped->isOutput;
+        return true;
+    }
+
+    int oldValueOf(const ModuleDescriptor& oldDesc, int parameterIndex) const
+    {
+        for (size_t i = 0; i < oldDesc.parameters.size() && i < oldValues_.size(); ++i)
+            if (oldDesc.parameters[i].paramClass == "parameter" && oldDesc.parameters[i].index == parameterIndex)
+                return oldValues_[i];
+        return 0;
+    }
+
+    // The panel LEDs only follow incremental messages, never an upload, so each
+    // knob and CC on the module is freed by name before it goes; the upload
+    // then relights whatever is still assigned.
+    void freePanelLights()
+    {
+        if (!ctx_.connMgr.isConnected())
+            return;
+        const int pid = ctx_.connMgr.getPatchId(ctx_.slot);
+        for (int k = 0; k < 23; ++k)
+        {
+            const auto& ka = ctx_.patch.knobAssignments[static_cast<size_t>(k)];
+            if (ka.assigned && ka.section == section_ && ka.module == index_)
+                ctx_.connMgr.sendRawSysEx(KnobAssignmentMessage::deassign(pid, k, ctx_.slot));
+        }
+        for (const auto& ca : ctx_.patch.ctrlAssignments)
+            if (ca.section == section_ && ca.module == index_)
+                ctx_.connMgr.sendRawSysEx(MidiCtrlAssignmentMessage::deassign(pid, ca.control, ctx_.slot));
+    }
+
+    UndoContext& ctx_;
+    int section_, index_ = -1, oldTypeId_ = -1, newTypeId_;
+    juce::String title_;
+    juce::Point<int> position_;
+    std::vector<int> oldValues_;
+    std::vector<StashedConnection> oldCables_;
+    std::vector<MorphAssignment> oldMorphs_;
+    std::vector<std::pair<int, KnobAssignment>> oldKnobs_;
+    std::vector<CtrlAssignment> oldCtrls_;
+    ModuleReplacement::Plan plan_;
+    std::vector<PushedModule> pushed_;
+    int droppedCables_ = 0;
+    int droppedAssignments_ = 0;
 };
 
 // ============================================================================

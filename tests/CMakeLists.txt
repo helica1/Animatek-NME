@@ -25,6 +25,7 @@ target_sources(nme_tests PRIVATE
     test_mcp_event_log.cpp
     test_mcp_rules.cpp
     test_morph_assign_action.cpp
+    test_module_replacement.cpp
 
     # The units under test, pulled straight from the app tree
     ${CMAKE_SOURCE_DIR}/source/model/LightMeterLayout.cpp
@@ -62,6 +63,7 @@ target_sources(nme_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/source/protocol/MorphAssignmentMessage.cpp
     ${CMAKE_SOURCE_DIR}/source/protocol/MorphRangeChangeMessage.cpp
     ${CMAKE_SOURCE_DIR}/source/mcp/McpEventLog.cpp
+    ${CMAKE_SOURCE_DIR}/source/model/ModuleReplacement.cpp
 )
 
 target_include_directories(nme_tests PRIVATE

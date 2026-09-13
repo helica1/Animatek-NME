@@ -308,6 +308,36 @@ def delete_module(
 
 
 @mcp.tool()
+def replace_module(
+    section: int,
+    container_index: int,
+    type_name: Optional[str] = None,
+    type_id: Optional[int] = None,
+    slot: Optional[int] = None,
+) -> Any:
+    """Swap a module for another of its family in place, as one undoable step.
+
+    The new type must be in the same category (a FilterE can become a FilterD,
+    not an LFO); the error lists the family otherwise. The module keeps its
+    position and containerIndex, its name if it was renamed, the cables whose
+    connector exists on the new type (matched by name, or where only one choice
+    is possible), the parameter values whose name and range match, and the
+    knob, morph and MIDI CC assignments on those parameters. Everything else is
+    dropped, never guessed: the result counts keptCables, droppedCables,
+    keptParameters and droppedAssignments. A taller module pushes the ones below
+    it down its column, and fails if the column has no room.
+    """
+    params: dict[str, Any] = {"section": section, "containerIndex": container_index}
+    if type_name is not None:
+        params["typeName"] = type_name
+    if type_id is not None:
+        params["typeId"] = type_id
+    if slot is not None:
+        params["slot"] = slot
+    return _call("replace_module", params)
+
+
+@mcp.tool()
 def connect_cable(
     section: int,
     out_container_index: int,

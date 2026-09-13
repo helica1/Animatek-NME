@@ -3475,6 +3475,35 @@ void MainComponent::wireSlotView(int slot) {
     undoMgr().perform(new DeleteModuleAction(*ctx(), section, module));
     updateLoad();
   });
+  // The canvas has already opened the transaction and dropped its selection.
+  canvas.setReplaceModuleCallback([this, slot, patch, ctx, undoMgr, updateLoad]
+      (int section, Module* module, int newTypeId) {
+    if (!patch() || !ctx() || !module) return;
+    const auto* newDesc = moduleDescs.getModuleByIndex(newTypeId);
+    if (newDesc == nullptr) return;
+    const juce::String oldName = module->getDescriptor()->name;
+    prepareSlotModuleDeletion(slot);
+
+    auto* action = new ReplaceModuleAction(*ctx(), section, module, newTypeId);
+    const int droppedCables = action->getDroppedCables();
+    const int droppedAssignments = action->getDroppedAssignments();
+    if (!undoMgr().perform(action)) {
+      mainLayout->getStatusBar().showMessage(
+          "Cannot replace " + oldName + " with " + newDesc->name
+          + ": no room below it in the column, or the module limit is reached", 6000);
+      updateLoad();
+      return;
+    }
+
+    juce::String message = "Replaced " + oldName + " with " + newDesc->name;
+    if (droppedCables > 0)
+      message << " - " << droppedCables << (droppedCables == 1 ? " cable" : " cables") << " dropped";
+    if (droppedAssignments > 0)
+      message << " - " << droppedAssignments
+              << (droppedAssignments == 1 ? " assignment" : " assignments") << " dropped";
+    mainLayout->getStatusBar().showMessage(message, 6000);
+    updateLoad();
+  });
   canvas.setModuleMoveCallback([patch, ctx, undoMgr]
       (int section, int moduleIndex, juce::Point<int> oldPos, juce::Point<int> newPos) {
     if (!patch() || !ctx()) return;

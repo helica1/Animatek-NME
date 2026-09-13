@@ -29,6 +29,7 @@ private:
     juce::var moveModule(const juce::var& params);
     juce::var renameModule(const juce::var& params);
     juce::var deleteModule(const juce::var& params);
+    juce::var replaceModule(const juce::var& params);
     juce::var connectCable(const juce::var& params);
     juce::var deleteCable(const juce::var& params);
     juce::var setParameter(const juce::var& params);

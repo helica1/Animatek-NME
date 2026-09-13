@@ -56,7 +56,7 @@ return a clear error if it isn't.
 | `list_modules` | Read a patch's modules, connectors and cables |
 | `list_patches` | Loaded slots plus your disk library |
 | `create_patch`, `open_patch` | Start an empty patch, or load one by name/path |
-| `add_module`, `move_module`, `rename_module`, `delete_module` | Build and arrange |
+| `add_module`, `move_module`, `rename_module`, `delete_module`, `replace_module` | Build and arrange; swap a module for another of its family keeping its cables |
 | `connect_cable`, `delete_cable` | Wire it up |
 | `set_parameter` | Set or nudge one parameter |
 | `mutate_patch` | Run the editor's own Mutator as one undoable, throttled step |

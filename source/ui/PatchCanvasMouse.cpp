@@ -2,6 +2,7 @@
 #include "QuickAddPopup.h"
 #include "KnobDrag.h"
 #include "../model/ModulePlacement.h"
+#include "../model/ModuleReplacement.h"
 #include "../protocol/KnobAssignmentMessage.h"
 #include <cmath>
 #include <set>
@@ -1426,6 +1427,45 @@ void PatchCanvas::mouseDown(const juce::MouseEvent& e)
                 menu.addSeparator();
                 menu.addItem(6, "Initialize Module");
                 menu.addItem(7, "Exclude from Mutation", true, modPtr->isExcludedFromMutation());
+
+                // Replace with another module of the same family, keeping the
+                // cables, values and assignments that carry over
+                // (ModuleReplacement). Each entry says what it would cost in
+                // cables, so nothing is lost by surprise.
+                static constexpr int kReplaceMenuBase = 100000;
+                if (moduleDescs != nullptr && area.container != nullptr)
+                {
+                    std::vector<ModuleReplacement::ConnectorRef> used;
+                    for (auto& conn : area.container->getConnections())
+                        for (auto& c : modPtr->getConnectors())
+                            if (&c == conn.output || &c == conn.input)
+                                used.push_back({ c.getDescriptor()->index, c.getDescriptor()->isOutput });
+
+                    juce::PopupMenu replaceMenu;
+                    for (auto* candidate : ModuleReplacement::candidates(*moduleDescs, *modPtr->getDescriptor()))
+                    {
+                        const auto plan = ModuleReplacement::plan(*modPtr->getDescriptor(), *candidate, used);
+                        int droppedCables = 0;
+                        for (auto& conn : area.container->getConnections())
+                        {
+                            bool lost = false;
+                            for (auto& c : modPtr->getConnectors())
+                                if ((&c == conn.output || &c == conn.input)
+                                    && !plan.mapConnector({ c.getDescriptor()->index, c.getDescriptor()->isOutput }))
+                                    lost = true;
+                            droppedCables += lost ? 1 : 0;
+                        }
+
+                        juce::String label = candidate->fullname + " (" + formatDspCost(candidate->cycles) + ")";
+                        if (droppedCables > 0)
+                            label << " - drops " << droppedCables << (droppedCables == 1 ? " cable" : " cables");
+                        replaceMenu.addItem(kReplaceMenuBase + candidate->index, label,
+                                            area.container->canAdd(*candidate));
+                    }
+                    if (replaceMenu.getNumItems() > 0)
+                        menu.addSubMenu("Replace with", replaceMenu);
+                }
+
                 menu.addSeparator();
                 menu.addItem(5, "Delete Module");
 
@@ -1599,6 +1639,18 @@ void PatchCanvas::mouseDown(const juce::MouseEvent& e)
                                 if (paramDragCompleteCallback)
                                     paramDragCompleteCallback(sec, modPtr->getContainerIndex(), pd->index, oldVal, newVal);
                             }
+                            repaint();
+                        }
+                        else if (result >= kReplaceMenuBase && result < kReplaceMenuBase + 1024)
+                        {
+                            if (undoManager)
+                                undoManager->beginNewTransaction("Replace Module");
+                            // Same as a delete: the module about to be freed must
+                            // not still be selected (issue #61).
+                            if (isSelected(modPtr))
+                                clearSelection();
+                            if (replaceModuleCallback)
+                                replaceModuleCallback(sec, modPtr, result - kReplaceMenuBase);
                             repaint();
                         }
                         else if (result >= drumPresetSaveId)

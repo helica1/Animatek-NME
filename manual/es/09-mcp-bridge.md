@@ -58,7 +58,7 @@ las herramientas devuelven un error claro si no lo está.
 | `list_modules` | Leer los módulos, conectores y cables de un patch |
 | `list_patches` | Slots cargados y tu librería en disco |
 | `create_patch`, `open_patch` | Empezar un patch vacío, o cargar uno por nombre o ruta |
-| `add_module`, `move_module`, `rename_module`, `delete_module` | Construir y organizar |
+| `add_module`, `move_module`, `rename_module`, `delete_module`, `replace_module` | Construir y organizar; cambiar un módulo por otro de su familia sin perder sus cables |
 | `connect_cable`, `delete_cable` | Cablear |
 | `set_parameter` | Fijar o ajustar un parámetro |
 | `mutate_patch` | Ejecutar el propio Mutator del editor como un solo paso deshacible y regulado |

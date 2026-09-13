@@ -36,6 +36,31 @@ Ponle a un módulo tu propio nombre desde su menú contextual, o desde el campo
 (`Ctrl+Z` lo revierte). El nombre vive dentro del patch y llega al sintetizador
 con la siguiente subida completa.
 
+## Reemplazar un módulo
+
+Para probar un FilterD donde tienes un FilterE, haz clic derecho en el módulo y
+abre **Replace with**. Salen los módulos de su misma familia, cada uno con su
+consumo de DSP y, si es el caso, cuántos cables perdería. El nuevo ocupa el
+sitio del viejo en un solo paso deshacible (`Ctrl+Z` devuelve el anterior tal
+como estaba).
+
+Qué se conserva:
+
+- **La posición**, y **el nombre** si le habías puesto uno.
+- **Los cables** en conectores que también tiene el módulo nuevo, emparejados
+  por nombre. Si los nombres no coinciden, un cable solo pasa cuando no hay
+  nada que elegir: un FilterD cableado desde su salida `lp` conserva ese cable
+  en la única `out` de un FilterE.
+- **Los valores** de los parámetros con el mismo nombre y rango, como la
+  resonancia.
+- **Las asignaciones** de knobs, morph y CC MIDI sobre esos parámetros.
+
+Lo demás se suelta en vez de adivinarse. El cable del `sync` de un OscA no acaba
+en la entrada de FM de un OscB solo porque las dos sean entradas de audio. La
+barra de estado dice cuántos cables y asignaciones se han perdido. Un módulo más
+alto empuja hacia abajo los de su columna; si no cabe, el reemplazo se rechaza y
+no cambia nada.
+
 ## Cables
 
 - **Crear**: arrastra de un conector a otro compatible. Los destinos válidos se

@@ -58,6 +58,11 @@ tools to work; they return a clear error if it isn't.
 - `rename_module(section, container_index, name, slot?)` — undoable, like every
   other structural edit.
 - `delete_module(section, container_index, slot?)`
+- `replace_module(section, container_index, type_name?, type_id?, slot?)` — swap a
+  module for another of its family in place, as one undo step. Keeps position,
+  a user-given name, cables on connectors that exist on the new type, values of
+  parameters with the same name and range, and the assignments on them; reports
+  what was kept and dropped.
 - `connect_cable(section, out_container_index, out_connector,
   in_container_index, in_connector, out_is_output?, in_is_output?, slot?)`
 - `delete_cable(section, out_container_index, out_connector,

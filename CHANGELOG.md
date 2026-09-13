@@ -4,6 +4,26 @@
 
 ### Added
 
+- **Replace a module with another of its family, from its right-click menu**
+  (2026-09-13, Javier's request). Turning a FilterE into a FilterD used to mean
+  deleting it, adding the new one and wiring it all again. "Replace with" lists the
+  module's own family, each entry with its DSP share and how many cables it would
+  drop, and swaps it in place as one undo step. It keeps the position, the name if
+  the module was renamed, the cables on connectors the new type also has (by name,
+  or where only one choice exists: FilterD's lp into FilterE's single out), the
+  values of parameters with the same name and range, and the knob, morph and MIDI
+  CC assignments on those parameters. Anything else is dropped and said in the
+  status bar, never rewired to a plausible guess: an OscA's sync does not become an
+  OscB's FM input. A taller module pushes the ones below it down the column, or is
+  refused if the column has no room. The MCP bridge gets the same as
+  `replace_module`. Logic in `source/model/ModuleReplacement.*`, the undoable swap
+  in `ReplaceModuleAction`.
+  Verification: `tests/test_module_replacement.cpp` covers the connector and
+  parameter matching against the real module descriptions, the family list, and a
+  swap with a cable, a knob, a morph and a CC through undo and redo; the suite
+  passes, 92 test cases / 2,398 assertions, plain and under ASan/UBSan. Javier
+  tried it in the editor the same day and it works; edge cases to come from use.
+
 - **The MCP bridge can read the synth back, and assign knobs, morphs and MIDI CCs**
   (M1, and the groundwork for testing against hardware, 2026-09-13). Until now a
   client could send edits but never learn what the synth made of them. Thirteen new

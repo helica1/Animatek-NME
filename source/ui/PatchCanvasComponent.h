@@ -38,6 +38,8 @@ public:
     using CustomParameterChangeCallback = std::function<void(int section, int moduleId, int parameterId, int oldValue, int newValue)>;
     using ModuleDropCallback = std::function<void(int typeId, int section, int gridX, int gridY, const juce::String& name)>;
     using DeleteModuleCallback = std::function<void(int section, Module* module)>;
+    // Replace a module by another type of its family: section, module, new type index
+    using ReplaceModuleCallback = std::function<void(int section, Module* module, int newTypeId)>;
     using RenameModuleCallback = std::function<void(int section, Module* module, const juce::String& oldName, const juce::String& newName)>;
     using ModuleSelectedCallback = std::function<void(Module* module, int section)>;
     // Module move callback for undo: section, moduleIndex, oldPos, newPos
@@ -149,6 +151,7 @@ public:
     void setCustomParameterChangeCallback(CustomParameterChangeCallback cb) { customParameterChangeCallback = std::move(cb); }
     void setModuleDropCallback(ModuleDropCallback cb) { moduleDropCallback = std::move(cb); }
     void setDeleteModuleCallback(DeleteModuleCallback cb) { deleteModuleCallback = std::move(cb); }
+    void setReplaceModuleCallback(ReplaceModuleCallback cb) { replaceModuleCallback = std::move(cb); }
     void setRenameModuleCallback(RenameModuleCallback cb) { renameModuleCallback = std::move(cb); }
     void setModuleMoveCallback(ModuleMoveCallback cb) { moduleMoveCallback = std::move(cb); }
     void setModuleSelectedCallback(ModuleSelectedCallback cb) { moduleSelectedCallback = std::move(cb); }
@@ -446,6 +449,7 @@ private:
     CustomParameterChangeCallback customParameterChangeCallback;
     ModuleDropCallback moduleDropCallback;
     DeleteModuleCallback deleteModuleCallback;
+    ReplaceModuleCallback replaceModuleCallback;
     RenameModuleCallback renameModuleCallback;
     ModuleMoveCallback moduleMoveCallback;
     ModuleSelectedCallback moduleSelectedCallback;
@@ -862,6 +866,9 @@ public:
 
     void setDeleteModuleCallback(PatchCanvas::DeleteModuleCallback cb)
     { toBothCanvases(&PatchCanvas::setDeleteModuleCallback, std::move(cb)); }
+
+    void setReplaceModuleCallback(PatchCanvas::ReplaceModuleCallback cb)
+    { toBothCanvases(&PatchCanvas::setReplaceModuleCallback, std::move(cb)); }
 
     void setRenameModuleCallback(PatchCanvas::RenameModuleCallback cb)
     { toBothCanvases(&PatchCanvas::setRenameModuleCallback, std::move(cb)); }

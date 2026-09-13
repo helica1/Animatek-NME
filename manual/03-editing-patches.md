@@ -52,6 +52,29 @@ field at the top of the Inspector. Renaming is a normal, undoable edit
 (`Ctrl+Z` takes it back). The name reaches the synth as you type it, so storing
 the patch to a bank right afterwards keeps the names you gave.
 
+## Replacing a module
+
+To try a FilterD where a FilterE is, right-click the module and open
+**Replace with**. It lists the module's own family, each entry with its DSP
+share and, when it applies, how many cables it would drop. The new module takes
+the old one's place in a single undoable step (`Ctrl+Z` brings the old one back
+exactly as it was).
+
+What carries over:
+
+- **Position**, and the **name** if you had renamed the module.
+- **Cables** on connectors the new module also has, matched by name. Where the
+  names differ, a cable only moves when there is no choice to make: a FilterD
+  wired from its `lp` output keeps that cable on a FilterE's single `out`.
+- **Values** of parameters with the same name and range, such as resonance.
+- **Knob, morph and MIDI CC assignments** on those parameters.
+
+Everything else is dropped rather than guessed. An OscA's `sync` cable does
+not end up on an OscB's FM input just because both are audio inputs. The status
+bar says how many cables and assignments were dropped. A taller module pushes
+the ones below it down the column; if the column has no room, the replacement
+is refused and nothing changes.
+
 ## Comments
 
 A comment is a text note that lives on the canvas: what a module does, which knob

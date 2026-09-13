@@ -453,6 +453,7 @@ juce::var McpRequestHandler::handle(const juce::var& request)
         else if (method == "set_morph_value")  result = setMorphValue(params);
         else if (method == "play_note")        result = playNote(params);
         else if (method == "list_bank")        result = listBank(params);
+        else if (method == "replace_module")   result = replaceModule(params);
         else throw McpError{ "unknown_method", "Unknown method: " + method };
 
         obj->setProperty("ok", true);
@@ -1021,6 +1022,75 @@ juce::var McpRequestHandler::deleteModule(const juce::var& params)
     auto* result = new juce::DynamicObject();
     result->setProperty("containerIndex", containerIndex);
     result->setProperty("name", name);
+    return juce::var(result);
+}
+
+juce::var McpRequestHandler::replaceModule(const juce::var& params)
+{
+    int slot = resolveSlot(params);
+    auto* ctx = owner_.getSlotUndoContext(slot);
+    auto* patch = owner_.getSlotPatch(slot);
+    if (!ctx || !patch)
+        throw McpError{ "no_patch", "No patch loaded in slot " + juce::String(slot) };
+    ensurePatchEditable(owner_);
+
+    int section = resolveSection(params);
+    if (!params.hasProperty("containerIndex"))
+        throw McpError{ "missing_param", "containerIndex is required" };
+    int containerIndex = static_cast<int>(params["containerIndex"]);
+    auto* module = patch->getContainer(section).getModuleByIndex(containerIndex);
+    if (!module)
+        throw McpError{ "unknown_module", "No module with containerIndex " + juce::String(containerIndex) };
+
+    const ModuleDescriptor* descriptor = nullptr;
+    if (params.hasProperty("typeId"))
+        descriptor = owner_.getModuleDescriptions().getModuleByIndex(static_cast<int>(params["typeId"]));
+    else if (params.hasProperty("typeName"))
+        descriptor = owner_.getModuleDescriptions().getModuleByName(params["typeName"].toString());
+    else
+        throw McpError{ "missing_param", "typeId or typeName is required" };
+    if (!descriptor)
+        throw McpError{ "unknown_type", "No module type matches the given typeId/typeName" };
+
+    const auto* current = module->getDescriptor();
+    if (descriptor->index == current->index)
+        throw McpError{ "invalid_param", "The module is already a " + current->name };
+    if (!descriptor->instantiable)
+        throw McpError{ "not_instantiable", descriptor->name + " cannot be instantiated" };
+    if (descriptor->category != current->category)
+    {
+        juce::StringArray family;
+        for (auto* d : ModuleReplacement::candidates(owner_.getModuleDescriptions(), *current))
+            family.add(d->name);
+        throw McpError{ "not_same_family", descriptor->name + " is in " + descriptor->category + ", not "
+            + current->category + ": a module can only be replaced by one of its family ("
+            + family.joinIntoString(", ") + ")" };
+    }
+
+    const juce::String previousType = current->name;
+    owner_.prepareSlotModuleDeletion(slot);
+    auto* action = new ReplaceModuleAction(*ctx, section, module, descriptor->index);
+    const int droppedCables = action->getDroppedCables();
+    const int keptCables = action->getKeptCables();
+    const int droppedAssignments = action->getDroppedAssignments();
+    const int keptParameters = action->getKeptParameters();
+
+    owner_.getSlotUndoManager(slot).beginNewTransaction("Replace Module (MCP)");
+    if (!owner_.getSlotUndoManager(slot).perform(action))
+        throw McpError{ "replace_failed", "Could not replace the module: no room below it in its column "
+            "for the taller one, or the module limit is reached" };
+
+    auto* replaced = patch->getContainer(section).getModuleByIndex(containerIndex);
+    auto* result = new juce::DynamicObject();
+    result->setProperty("containerIndex", containerIndex);
+    result->setProperty("previousType", previousType);
+    result->setProperty("type", descriptor->name);
+    result->setProperty("name", replaced != nullptr ? replaced->getTitle() : juce::String());
+    result->setProperty("height", descriptor->height);
+    result->setProperty("keptCables", keptCables);
+    result->setProperty("droppedCables", droppedCables);
+    result->setProperty("keptParameters", keptParameters);
+    result->setProperty("droppedAssignments", droppedAssignments);
     return juce::var(result);
 }
 
