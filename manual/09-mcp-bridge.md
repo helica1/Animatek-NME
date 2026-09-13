@@ -62,6 +62,9 @@ return a clear error if it isn't.
 | `mutate_patch` | Run the editor's own Mutator as one undoable, throttled step |
 | `save_patch` | Write a slot's patch (and its `.var`) to a `.pch` |
 | `store_to_bank` | Upload a slot's patch and store it to a synth bank position |
+| `get_synth_status`, `get_events`, `read_lights`, `list_bank` | Read the synth back: connection and slots, what happened since the last look, LEDs and meters, what a bank holds |
+| `list_assignments`, `assign_knob`, `assign_morph`, `assign_midi_cc` (and their `unassign_` twins) | Put parameters under front-panel knobs, morph groups and MIDI CCs |
+| `set_morph_value`, `play_note` | Turn a morph dial; play a note to hear or meter the result |
 
 Most tools take a `slot` (0–3 = A–D, default: the active tab) and a `section`
 (0 = common, 1 = poly). Grid coordinates are in module-column units, not pixels,
@@ -84,3 +87,15 @@ Full parameter reference: `mcp-bridge/README.md` in the repository.
   break, but `parameterId` is the safer thing to store.
 - **`store_to_bank` needs a connected synth** with its patch list loaded; it
   uploads first and writes to the bank only once the upload is acknowledged.
+- **Let it check its work on the synth.** An edit call only says the editor
+  accepted it. `get_events` says what the synth did afterwards (an error, a
+  dropped connection, a knob you turned), and `play_note` followed by
+  `read_lights` shows whether the patch actually makes signal. None of the
+  reading tools send anything to the synth.
+- **Knobs are named as on the panel.** `assign_knob` takes `"Knob 7"`,
+  `"Pedal"`, `"After touch"` or `"On/Off switch"`, or an index 0-22. A bare
+  `"7"` is refused, since it could mean Knob 7 or index 7. A knob that already
+  drives something is left alone unless the assistant asks to replace it.
+- **LOCAL is not a sandbox yet.** While the synth is connected, edits to a slot
+  marked LOCAL still reach it. Test in a slot whose patch you do not mind
+  losing, with the banks backed up.

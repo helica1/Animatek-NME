@@ -62,6 +62,13 @@ definition; the new plan supplies its delivery and verification context.
   wrapper in `mcp-bridge/server.py`, following the `set_parameter` pattern. Assignments
   are already part of the patch model and upload path (`buildHwFromPatch` reads
   `patch->knobAssignments`), so this is plumbing rather than new protocol work.
+  **In progress (2026-09-13, branch `feature/mcp-synth-testing`):** `list_assignments`,
+  `assign_knob`/`unassign_knob`, `assign_morph`/`unassign_morph` and
+  `assign_midi_cc`/`unassign_midi_cc` are written on both halves, alongside read-back tools
+  for hardware testing. Built and unit-tested (rules, event log, morph undo), and a first
+  pass against a G1 the same day went through without a synth error (44 calls in a scratch
+  slot). The box stays open until the result is also checked through the UI and on the
+  front panel. Details: POST_0180_PLAN.md M1.
 
 - [x] **MDI: the four slots inside the main window.** Done, unreleased. The per-slot OS
   pop-out windows are replaced by internal sub-windows in the central area, as the original

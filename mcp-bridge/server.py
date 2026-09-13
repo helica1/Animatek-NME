@@ -490,5 +490,292 @@ def store_to_bank(
     return _call("store_to_bank", params)
 
 
+# --- Reading the synth back ---------------------------------------------------
+
+
+@mcp.tool()
+def get_synth_status() -> Any:
+    """What the editor knows about the synth right now. Sends nothing to the synth.
+
+    Read it before testing against hardware, and again after anything that
+    should have changed it. Reports the connection and synth OS version, the
+    slot the synth has focused versus the editor's active tab, whether a patch
+    fetch or upload is in flight and whether edits are still queued, and for
+    each slot: the patch name, whether it is LOCAL (the editor's patch is not
+    known to match the synth's - edits to it are still sent while connected),
+    whether the synth has it enabled, its voice count and its bank location.
+
+    latestEventSeq is the value to pass as `after` to get_events.
+    """
+    return _call("get_synth_status")
+
+
+@mcp.tool()
+def get_events(
+    after: int = 0,
+    limit: int = 100,
+    types: Optional[list[str]] = None,
+) -> Any:
+    """What the synth and the connection did since event `after`, oldest first.
+
+    A tool call only answers for itself. This is how to find out that the synth
+    replied with an error, the connection dropped, or someone turned a
+    front-panel knob in between. Pass the returned latestSeq as `after` on the
+    next call. truncated=true means events were lost: the log keeps the last 512.
+
+    Types: connection, synth_error (code, description), synth_parameter (a value
+    the synth reported by itself: a front-panel knob, a morph dial - section 2,
+    containerIndex 1 - or a MIDI CC), slot_focus, slots_enabled, patch_received,
+    patch_incomplete, voice_count.
+    types: optional filter, e.g. ["synth_error", "connection"]. limit: 1-500.
+    """
+    params: dict[str, Any] = {"after": after, "limit": limit}
+    if types is not None:
+        params["types"] = types
+    return _call("get_events", params)
+
+
+@mcp.tool()
+def read_lights(
+    section: Optional[int] = None,
+    container_index: Optional[int | list[int]] = None,
+    slot: Optional[int] = None,
+) -> Any:
+    """Read the LEDs and meters the synth is streaming, per module.
+
+    The G1 streams lights only for the slot it has focused, which is the
+    editor's active slot; asking for another slot is an error. Only modules that
+    have LEDs or meters are listed. LEDs are 0-3. Meters come in wire-order
+    pairs (channel B, channel A): a single meter reads the first value, a
+    stereo meter's left side the second.
+
+    lastChangeAgeMs is the time since any value last changed. stale=true means
+    no values have arrived for this slot yet.
+    Pair it with play_note to check that a patch actually makes signal.
+    """
+    params: dict[str, Any] = {}
+    if section is not None:
+        params["section"] = section
+    if container_index is not None:
+        params["containerIndex"] = container_index
+    if slot is not None:
+        params["slot"] = slot
+    return _call("read_lights", params)
+
+
+@mcp.tool()
+def list_bank(bank: int, include_empty: bool = True) -> Any:
+    """List what the synth holds in each position (1-99) of one bank.
+
+    bank: 1-9. Each position reports its location (bank*100 + position, the
+    number store_to_bank uses) and its patch name, or null when it is empty.
+    store_to_bank overwrites a position without asking, so check here first.
+    Comes from the patch list the editor fetched on connect: requires a
+    connected synth and a finished list. include_empty=False lists only the
+    used positions.
+    """
+    return _call("list_bank", {"bank": bank, "includeEmpty": include_empty})
+
+
+# --- Knob, morph and MIDI CC assignments ----------------------------------------
+
+
+def _assign_target(
+    params: dict[str, Any],
+    section: Optional[int],
+    container_index: Optional[int],
+    parameter_name: Optional[str],
+    parameter_id: Optional[int],
+    morph_group: Optional[int] = None,
+) -> dict[str, Any]:
+    if morph_group is not None:
+        params["morphGroup"] = morph_group
+    if section is not None:
+        params["section"] = section
+    if container_index is not None:
+        params["containerIndex"] = container_index
+    if parameter_name is not None:
+        params["parameterName"] = parameter_name
+    if parameter_id is not None:
+        params["parameterId"] = parameter_id
+    return params
+
+
+@mcp.tool()
+def list_assignments(slot: Optional[int] = None) -> Any:
+    """List a patch's front-panel knob, morph group and MIDI CC assignments.
+
+    knobs: each assigned knob, by index and knobName ("Knob 7"), and its target.
+    morphGroups: the four groups (0-3) with their dial value, keyboard setting
+    and member parameters with their signed range. morphAssignmentLimit is the
+    G1's 25 per patch. midiCcs: each assigned CC and its target.
+
+    A target is either a module parameter (section, containerIndex, parameterId,
+    moduleName, parameterName) or a morph group's dial (morphGroup).
+    slot: 0-3 (A-D); defaults to the currently active slot.
+    """
+    params: dict[str, Any] = {}
+    if slot is not None:
+        params["slot"] = slot
+    return _call("list_assignments", params)
+
+
+@mcp.tool()
+def assign_knob(
+    knob: int | str,
+    section: Optional[int] = None,
+    container_index: Optional[int] = None,
+    parameter_name: Optional[str] = None,
+    parameter_id: Optional[int] = None,
+    morph_group: Optional[int] = None,
+    replace: bool = False,
+    slot: Optional[int] = None,
+) -> Any:
+    """Put a parameter, or a morph group's dial, under a front-panel knob. Undoable.
+
+    knob: an index 0-22 or a name - "Knob 1" to "Knob 18", "Pedal",
+    "After touch", "On/Off switch". A bare number in a string ("7") is refused
+    because it is ambiguous; use 6 or "Knob 7".
+    Target: section + container_index + parameter_name or parameter_id, or
+    morph_group (0-3) on its own.
+
+    A parameter already on another knob moves to this one. If the knob already
+    drives something else the call fails with knob_in_use, unless replace=True,
+    which frees it first; one Ctrl+Z then gives it back.
+    """
+    params = _assign_target({"knob": knob, "replace": replace}, section,
+                            container_index, parameter_name, parameter_id, morph_group)
+    if slot is not None:
+        params["slot"] = slot
+    return _call("assign_knob", params)
+
+
+@mcp.tool()
+def unassign_knob(knob: int | str, slot: Optional[int] = None) -> Any:
+    """Free a front-panel knob, whatever it drives. Undoable.
+
+    knob: an index 0-22 or a name, as for assign_knob.
+    """
+    params: dict[str, Any] = {"knob": knob}
+    if slot is not None:
+        params["slot"] = slot
+    return _call("unassign_knob", params)
+
+
+@mcp.tool()
+def assign_morph(
+    section: int,
+    container_index: int,
+    group: int,
+    range: int = 0,
+    parameter_name: Optional[str] = None,
+    parameter_id: Optional[int] = None,
+    slot: Optional[int] = None,
+) -> Any:
+    """Put a module parameter in a morph group, with a signed range. Undoable.
+
+    group: 0-3. range: -127 to 127, the span the morph dial sweeps the
+    parameter through (negative sweeps it down). 0 assigns it without movement,
+    which is what the canvas menu does.
+    Calling it on a parameter already in a group moves it to this group/range.
+    A G1 patch holds at most 25 morph assignments (morph_limit_reached).
+    Identify the parameter with parameter_name or parameter_id.
+    """
+    params = _assign_target({"group": group, "range": range}, section,
+                            container_index, parameter_name, parameter_id)
+    if slot is not None:
+        params["slot"] = slot
+    return _call("assign_morph", params)
+
+
+@mcp.tool()
+def unassign_morph(
+    section: int,
+    container_index: int,
+    parameter_name: Optional[str] = None,
+    parameter_id: Optional[int] = None,
+    slot: Optional[int] = None,
+) -> Any:
+    """Take a module parameter out of its morph group. Undoable."""
+    params = _assign_target({}, section, container_index, parameter_name, parameter_id)
+    if slot is not None:
+        params["slot"] = slot
+    return _call("unassign_morph", params)
+
+
+@mcp.tool()
+def assign_midi_cc(
+    cc: int,
+    section: Optional[int] = None,
+    container_index: Optional[int] = None,
+    parameter_name: Optional[str] = None,
+    parameter_id: Optional[int] = None,
+    morph_group: Optional[int] = None,
+    replace: bool = False,
+    slot: Optional[int] = None,
+) -> Any:
+    """Put a parameter, or a morph group's dial, under a MIDI CC. Undoable.
+
+    cc: 0-119 (120-127 are channel mode messages).
+    Target: section + container_index + parameter_name or parameter_id, or
+    morph_group (0-3) on its own. A CC already driving something else fails
+    with cc_in_use unless replace=True.
+    """
+    params = _assign_target({"cc": cc, "replace": replace}, section,
+                            container_index, parameter_name, parameter_id, morph_group)
+    if slot is not None:
+        params["slot"] = slot
+    return _call("assign_midi_cc", params)
+
+
+@mcp.tool()
+def unassign_midi_cc(cc: int, slot: Optional[int] = None) -> Any:
+    """Free a MIDI CC, whatever it drives. Undoable."""
+    params: dict[str, Any] = {"cc": cc}
+    if slot is not None:
+        params["slot"] = slot
+    return _call("unassign_midi_cc", params)
+
+
+# --- Playing the synth ------------------------------------------------------------
+
+
+@mcp.tool()
+def set_morph_value(
+    morph_group: int,
+    value: Optional[int] = None,
+    delta: Optional[int] = None,
+    slot: Optional[int] = None,
+) -> Any:
+    """Turn a morph group's dial, as dragging it in the editor's header bar does.
+
+    morph_group: 0-3. Provide exactly one of value (0-127, clamped) or delta.
+    Every parameter in the group moves by its range. Like the dial, this is not
+    an undo step.
+    """
+    params: dict[str, Any] = {"morphGroup": morph_group}
+    if value is not None:
+        params["value"] = value
+    if delta is not None:
+        params["delta"] = delta
+    if slot is not None:
+        params["slot"] = slot
+    return _call("set_morph_value", params)
+
+
+@mcp.tool()
+def play_note(note: int, duration_ms: int = 500) -> Any:
+    """Play one note on the synth and release it after duration_ms (10-10000).
+
+    note: 0-127, 60 = middle C. It sounds on the slot the synth has focused
+    (synthFocusedSlot in get_synth_status). The editor protocol carries no
+    velocity. Requires a connected synth.
+    To check the note reached the patch, call read_lights while it is held: an
+    envelope's gate LED reads 1. Voice counts are not a sound check - the G1
+    does not report a change when a note plays.
+    """
+    return _call("play_note", {"note": note, "durationMs": duration_ms})
+
+
 if __name__ == "__main__":
     mcp.run()

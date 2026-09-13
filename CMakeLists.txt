@@ -155,6 +155,10 @@ set(NME_SHARED_SOURCES
     source/sync/PatchSynchronizer.cpp
     source/sync/BankTransferManager.cpp
 
+    # What the synth did, kept for the MCP bridge. Plain data and no socket, so
+    # it is shared: MainComponent records into it whether or not the bridge is built.
+    source/mcp/McpEventLog.cpp
+
     # Help system
     source/help/ModuleHelpData.cpp
     source/help/ModuleHelpPopup.cpp

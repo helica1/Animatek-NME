@@ -2,7 +2,67 @@
 
 ## Unreleased
 
+### Added
+
+- **The MCP bridge can read the synth back, and assign knobs, morphs and MIDI CCs**
+  (M1, and the groundwork for testing against hardware, 2026-09-13). Until now a
+  client could send edits but never learn what the synth made of them. Thirteen new
+  tools. `get_synth_status`: connection and synth OS version, the slot the synth
+  has focused versus the editor's active tab, transfers in flight, and per slot the
+  patch, LOCAL, enabled, voice count and bank location. `get_events`: a 512-entry
+  log of synth errors, connection changes, values the synth reported itself (a
+  front-panel knob, a morph dial, a MIDI CC), slot focus and enable changes, patches
+  received or incomplete and voice counts, read with a cursor that says when the log
+  wrapped. `read_lights`: per-module LEDs and meters for the focused slot. `list_bank`: the patch name in
+  each position of a synth bank, so a store can pick a free one.
+  `list_assignments`, `assign_knob`/`unassign_knob`, `assign_morph`/`unassign_morph`,
+  `assign_midi_cc`/`unassign_midi_cc`, and `set_morph_value` and `play_note` to hear
+  or meter the result. Assignments go through the same undo actions as the canvas. A
+  knob or CC already in use is refused unless the caller asks to replace it, and one
+  undo then gives it back; morph groups are capped at the G1's 25 assignments; knobs
+  are named as on the panel ("Knob 7", "Pedal"), and a bare "7" is refused as
+  ambiguous. `set_parameter` now shares its parameter lookup with the new tools,
+  with the same behaviour.
+  Verification: `tests/test_mcp_event_log.cpp` (cursor, limit, wrap-around) and
+  `tests/test_mcp_rules.cpp` (knob names, ranges); the full suite passes, 86 test
+  cases / 2,284 assertions, plain and under ASan/UBSan, and `server.py` registers
+  all 29 tools. Against a G1 (OS 3.03) the same day, in a scratch slot: a patch
+  built over the bridge, notes played, the ADSR's gate LED and the LFO's LED read
+  back through `read_lights`, knobs assigned, moved, refused when in use and
+  removed, a morph group put on a knob, two morph assignments with ranges, a CC,
+  the morph dial turned and everything unassigned again. 44 calls, and no synth
+  error or disconnect in the event log. **Not verified:** the sound itself, which
+  nobody listened to on this side, and the front-panel LEDs. The G1 sent no
+  voice-count change while notes played, so `voice_count` is not a way to tell a
+  note sounded. LOCAL slots still receive edits while connected (S4).
+
 ### Fixed
+
+- **A store to a bank no longer gets lost when it follows an upload** (2026-09-13).
+  Storing a patch uploads it first and sends the store as soon as the synth ACKs
+  the upload, and that store went out raw, without waiting for an answer. Of four
+  stores in a row made over the MCP bridge, one never reached the bank, with no
+  error on either side: only the synth's bank list, fetched again, showed the gap.
+  The store now goes through the ACK queue, as `storeLoadedSlotToBank` already did.
+  Verification: the missing patch was stored again, and all four positions read
+  back from a patch list fetched fresh after reconnecting. The failure depends on
+  timing and was seen once, so this is the likely cause, not a reproduced one.
+
+- **The bank list follows a store** (2026-09-13). The editor fetches the synth's
+  patch names once, on connect, and a store never updated them, so the patch
+  browser and `list_bank` went on showing the stored position as empty, or under
+  its old name, until the next connection. The stored name is now written into the
+  list and the browser is refreshed. Built and tested, not yet seen on screen.
+
+- **Undoing a morph assignment no longer leaves it drawn on the knob** (2026-09-13).
+  A morph is held twice: in the patch's assignment list, which is what is saved and
+  sent, and in each parameter's own group and range, which is what the canvas and
+  the inspector draw. The canvas copied the list into the parameters only when a
+  patch was set, and the undo actions touched only the list, so Ctrl+Z took the
+  morph out of the patch but left it drawn until the patch was reloaded. The actions
+  now update both. Found by reading the code while adding the MCP morph tools, which
+  set nothing on the parameter themselves. `tests/test_morph_assign_action.cpp` covers
+  assign, range change, undo and redo; not yet checked on screen.
 
 - **A failed backup no longer destroys the good one** (S2, 2026-09-12). Backing up
   all banks deleted every `.pch` in `Bank1`-`Bank9` before fetching a single patch,

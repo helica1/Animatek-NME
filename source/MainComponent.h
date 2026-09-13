@@ -25,6 +25,8 @@
 #include "ui/PatchNotesFloaterWindow.h"
 #include "ui/MutatorWindow.h"
 #include "ui/SysexMonitorWindow.h"
+#include "mcp/McpEventLog.h"
+#include <array>
 #if NME_MCP_BRIDGE
 #include "mcp/McpBridgeServer.h"
 #endif
@@ -77,6 +79,31 @@ public:
     bool loadPatchFileIntoSlot(int slot, const juce::File& file, bool activate,
                                juce::String& error);
     void prepareSlotModuleDeletion(int slot);
+
+    // What the editor already knows about the synth, for the MCP bridge's
+    // read-back tools (get_synth_status, read_lights, get_events). Nothing here
+    // asks the synth anything: it is the state the UI was already drawing from,
+    // made visible to a client that cannot see the screen.
+    const ConnectionManager& getConnectionManager() const { return connectionManager; }
+    bool isSlotLocal(int slot) const { return slot >= 0 && slot < numSlots && slotIsLocal[slot]; }
+    bool isSlotEnableStateKnown() const { return slotEnableStateKnown; }
+    const std::array<bool, 4>& getLastEnabledSlots() const { return lastEnabledSlots; }
+    const std::array<int, 4>& getSynthVoiceCounts() const { return synthVoiceCounts; }
+    const SynthSettings& getCachedSynthSettings() const { return cachedSynthSettings; }
+    const ThemeData& getThemeData() const { return themeData; }
+    struct LightMeterFrame
+    {
+        std::array<int, 128> lights {};
+        std::array<int, 128> meters {};
+        int slot = -1;              // the slot that had synth focus when it arrived
+        juce::int64 timeMs = 0;     // 0 = no frame since the editor started
+    };
+    const LightMeterFrame& getLastLightMeterFrame() const { return lastLightMeterFrame; }
+    McpEventLog& getMcpEventLog() { return mcpEventLog; }
+    // A morph group's dial, by the same path as dragging it in the header bar.
+    bool setSlotMorphValue(int slot, int group, int value, juce::String& error);
+    // Sound a note on the synth's focused slot, released after durationMs.
+    bool playNoteOnSynth(int note, int durationMs, juce::String& error);
 
 private:
     // The four slot canvases. There is deliberately no "the canvas" accessor:
@@ -317,6 +344,11 @@ private:
 
     // Last-known global synth settings.
     SynthSettings cachedSynthSettings;
+    // Last voice counts, light frame and synth-side events, kept for the MCP
+    // bridge (see the accessors above). Written on the message thread.
+    std::array<int, 4> synthVoiceCounts {};
+    LightMeterFrame lastLightMeterFrame;
+    McpEventLog mcpEventLog;
     bool pendingSynthSettingsDialogOpen = false;
     juce::Component::SafePointer<SynthSettingsDialog> synthSettingsDialog;
 

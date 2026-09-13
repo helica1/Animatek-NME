@@ -37,6 +37,27 @@ private:
     juce::var savePatch(const juce::var& params);
     juce::var storeToBank(const juce::var& params);
 
+    // Reading the synth back: connection, slots, events, LEDs and meters.
+    juce::var getSynthStatus(const juce::var& params);
+    juce::var getEvents(const juce::var& params);
+    juce::var readLights(const juce::var& params);
+
+    // Front-panel knob, morph group and MIDI CC assignments.
+    juce::var listAssignments(const juce::var& params);
+    juce::var assignKnob(const juce::var& params);
+    juce::var unassignKnob(const juce::var& params);
+    juce::var assignMorph(const juce::var& params);
+    juce::var unassignMorph(const juce::var& params);
+    juce::var assignMidiCc(const juce::var& params);
+    juce::var unassignMidiCc(const juce::var& params);
+
+    // Playing it: a morph dial and a note.
+    juce::var setMorphValue(const juce::var& params);
+    juce::var playNote(const juce::var& params);
+
+    // What a synth bank holds, so a store can pick a free position.
+    juce::var listBank(const juce::var& params);
+
     int resolveSlot(const juce::var& params) const;
 
     MainComponent& owner_;

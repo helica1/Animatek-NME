@@ -191,6 +191,17 @@ public:
     void cancelPatchListFetch(const char* reason);  // Abort in-flight list fetch (delivers partial names)
     void resumePatchListIfInterrupted();  // Restart the list fetch if a patch op aborted it earlier
     const std::vector<std::string>& getPatchList() const { return patchListNames; }
+    // A store changes one bank position and the list is not fetched again, so
+    // whoever stores writes the new name in here. Without it the list (and the
+    // MCP bridge's list_bank) goes on showing the position as it was before.
+    void setPatchListName(int section, int position, const std::string& name)
+    {
+        if (section < 0 || section > 8 || position < 0 || position > 98)
+            return;
+        const auto index = static_cast<size_t>(section * 99 + position);
+        if (index < patchListNames.size())
+            patchListNames[index] = name;
+    }
     bool isPatchListLoaded() const { return patchListLoaded; }
 
     // Bank transfer hooks (one-shot, set by BankTransferManager before each item).

@@ -124,6 +124,16 @@ MainComponent::MainComponent(juce::ApplicationProperties &props)
     juce::MessageManager::callAsync(
         [safeThis, total, c0, c1, c2, c3]() {
           if (!safeThis) return;
+          const std::array<int, 4> counts { c0, c1, c2, c3 };
+          if (counts != safeThis->synthVoiceCounts) {
+            safeThis->synthVoiceCounts = counts;
+            juce::Array<juce::var> perSlot;
+            for (int c : counts)
+              perSlot.add(c);
+            auto* info = new juce::DynamicObject();
+            info->setProperty("voices", perSlot);
+            safeThis->mcpEventLog.record("voice_count", -1, juce::var(info));
+          }
           safeThis->mainLayout->getStatusBar().setVoiceCount(total);
           safeThis->mainLayout->getHeaderBar().setSynthDspLoad(c0, c1, c2, c3);
         });
@@ -481,6 +491,11 @@ MainComponent::MainComponent(juce::ApplicationProperties &props)
             // so the slot is in sync — clear any stale LOCAL badge (issue #21).
             safeThis->mainLayout->getSlotBar().setSlotName(targetSlot, safeThis->slotPatches[targetSlot]->getName());
             safeThis->setSlotLocal(targetSlot, false);
+            {
+              auto* info = new juce::DynamicObject();
+              info->setProperty("patchName", safeThis->slotPatches[targetSlot]->getName());
+              safeThis->mcpEventLog.record("patch_received", targetSlot, juce::var(info));
+            }
 
             // Then work out where it lives. This has to come after the LOCAL
             // badge is cleared: a slot still marked local is not looked up.
@@ -528,6 +543,12 @@ MainComponent::MainComponent(juce::ApplicationProperties &props)
   // patch without cables/parameters — editing or saving it would silently
   // corrupt the user's work, so warn loudly (issue #15).
   connectionManager.setPatchLoadIncompleteCallback([this](int slot, int received, int total) {
+    {
+      auto* info = new juce::DynamicObject();
+      info->setProperty("sectionsReceived", received);
+      info->setProperty("sectionsExpected", total);
+      mcpEventLog.record("patch_incomplete", slot, juce::var(info));
+    }
     juce::Component::SafePointer<MainComponent> safeThis(this);
     juce::MessageManager::callAsync([safeThis, slot, received, total]() {
       if (!safeThis) return;
@@ -672,6 +693,12 @@ MainComponent::MainComponent(juce::ApplicationProperties &props)
           // which the editor keeps in sync with activeSlot, so they belong
           // to that slot's canvas, whichever one the user is looking at.
           canvasFor(activeSlot).setLightMeterData(lights, meters);
+          // Kept for the MCP bridge's read_lights. The callback only fires when
+          // a value changed, so the time is of the last change, not the last frame.
+          std::copy(lights, lights + 128, lastLightMeterFrame.lights.begin());
+          std::copy(meters, meters + 128, lastLightMeterFrame.meters.begin());
+          lastLightMeterFrame.slot = activeSlot;
+          lastLightMeterFrame.timeMs = juce::Time::currentTimeMillis();
       });
 
   // Wire shake cables button
@@ -714,6 +741,16 @@ MainComponent::MainComponent(juce::ApplicationProperties &props)
     juce::MessageManager::callAsync([safeThis, section, moduleId, parameterId,
                                      value]() {
       if (!safeThis) return;
+      {
+        // A value the synth reported on its own: a front-panel knob, a morph
+        // dial or a MIDI controller. Section 2 module 1 is the morph groups.
+        auto* info = new juce::DynamicObject();
+        info->setProperty("section", section);
+        info->setProperty("containerIndex", moduleId);
+        info->setProperty("parameterId", parameterId);
+        info->setProperty("value", value);
+        safeThis->mcpEventLog.record("synth_parameter", safeThis->activeSlot, juce::var(info));
+      }
       if (safeThis->currentPatch() == nullptr)
         return;
 
@@ -793,6 +830,12 @@ MainComponent::MainComponent(juce::ApplicationProperties &props)
     else
       description = "unknown";
 
+    {
+      auto* info = new juce::DynamicObject();
+      info->setProperty("code", errorCode);
+      info->setProperty("description", description);
+      mcpEventLog.record("synth_error", -1, juce::var(info));
+    }
     mainLayout->getStatusBar().showMessage(
         "ERROR: Synth error code " + juce::String(errorCode)
         + " (" + description + "): check console for details", 8000);
@@ -838,6 +881,14 @@ MainComponent::MainComponent(juce::ApplicationProperties &props)
       safeThis->mainLayout->getSlotBar().setSlotsEnabled(enabled);
       safeThis->lastEnabledSlots = enabled;
       safeThis->slotEnableStateKnown = true;
+      {
+        juce::Array<juce::var> mask;
+        for (bool on : enabled)
+          mask.add(on);
+        auto* info = new juce::DynamicObject();
+        info->setProperty("enabled", mask);
+        safeThis->mcpEventLog.record("slots_enabled", -1, juce::var(info));
+      }
       // Only the first mask of a connection touches the sub-windows.
       safeThis->scheduleSlotWindowReconcile();
     });
@@ -860,6 +911,7 @@ MainComponent::MainComponent(juce::ApplicationProperties &props)
                   << " during browser load to slot " << safeThis->pendingBrowserLoadSlot << std::endl;
         return;
       }
+      safeThis->mcpEventLog.record("slot_focus", slot);
       safeThis->mainLayout->getSlotBar().setCurrentTab(slot);
       safeThis->switchToSlot(slot, /*notifySynth=*/false, /*bringOnScreen=*/false);
     });
@@ -2341,14 +2393,25 @@ void MainComponent::sendStoreToBank(int slot, int section, int position) {
 
   const int location = (section + 1) * 100 + position + 1;
   StorePatchMessage msg(slot, section, position);
-  connectionManager.sendRawSysEx(msg.toSysEx(slot));
+  // Through the ACK queue, like ConnectionManager::storeLoadedSlotToBank. Sent
+  // raw, a store fired straight off an upload's last ACK could reach a synth
+  // still busy with that upload and be dropped without a word: of four stores
+  // in a row on 2026-09-13, one never reached the bank.
+  connectionManager.sendAckedSysEx(msg.toSysEx(slot));
 
   // The patch now lives here, which is what the next store offers by default,
   // and the shortlist of same-named positions stops mattering.
   connectionManager.setSlotBankLocation(slot, section, position);
   slotBankCandidates[slot].clear();
+  // The bank list is not fetched again after a store, so write the new name
+  // into it: otherwise the position keeps its old name (or reads as empty)
+  // until the editor reconnects.
+  if (slotPatches[slot] != nullptr)
+    connectionManager.setPatchListName(section, position,
+                                       slotPatches[slot]->getName().toStdString());
   if (slot == activeSlot)
     updateStoreLocationDisplay();
+  mainLayout->getPatchBrowser().setPatchList(connectionManager.getPatchList());
   mainLayout->getPatchBrowser().setLoadedPatch(section, position);
 
   const char* slotNames[] = {"A", "B", "C", "D"};
@@ -3618,6 +3681,14 @@ void MainComponent::handleDisconnectionRequest() {
 void MainComponent::onConnectionStatusChanged(
     const ConnectionManager::Status &status) {
   bool connected = (status.state == ConnectionManager::State::Connected);
+  {
+    auto* info = new juce::DynamicObject();
+    info->setProperty("state", connected ? "connected"
+                               : status.state == ConnectionManager::State::Connecting ? "connecting"
+                                                                                      : "disconnected");
+    info->setProperty("message", status.message);
+    mcpEventLog.record("connection", -1, juce::var(info));
+  }
   if (!connected) {
     // Reconciling with the synth is a once-per-connection thing, so losing the
     // connection arms it again for the next one.
@@ -4453,6 +4524,47 @@ void MainComponent::setMorphEndpoint(bool isB, int snapIndex) {
     refreshMorphUi();
     mainLayout->getStatusBar().showMessage(
         juce::String("Morph ") + (isB ? "B" : "A") + " set from " + sourceName, 2000);
+}
+
+bool MainComponent::setSlotMorphValue(int slot, int group, int value, juce::String& error) {
+    if (slot < 0 || slot >= numSlots || !slotPatches[slot]) {
+        error = "No patch loaded in slot " + juce::String(slot);
+        return false;
+    }
+    if (group < 0 || group > 3) {
+        error = "morph group must be 0-3";
+        return false;
+    }
+    // What the header bar does when its dial is dragged: write the patch, send
+    // the value as a parameter of the morph section, and move every knob cell
+    // that shows it (issue #64). No undo step, exactly like the dial.
+    const int clamped = juce::jlimit(0, 127, value);
+    slotPatches[slot]->morphValues[static_cast<size_t>(group)] = clamped;
+    connectionManager.sendParameter(slot, 2, 1, group, clamped);
+    if (slot == activeSlot)
+        mainLayout->getHeaderBar().repaint();
+    refreshKnobFloater();
+    return true;
+}
+
+bool MainComponent::playNoteOnSynth(int note, int durationMs, juce::String& error) {
+    if (!connectionManager.isConnected()) {
+        error = "No synth connected";
+        return false;
+    }
+    if (note < 0 || note > 127) {
+        error = "note must be 0-127";
+        return false;
+    }
+    // Same message as the keyboard floater. The G1 plays it on the slot it has
+    // focused, and the protocol carries no velocity.
+    connectionManager.sendNoteOn(note, 100);
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    juce::Timer::callAfterDelay(juce::jlimit(10, 10000, durationMs), [safeThis, note]() {
+        if (safeThis != nullptr)
+            safeThis->connectionManager.sendNoteOff(note);
+    });
+    return true;
 }
 
 void MainComponent::assignMorphKnob(int knobIndex) {

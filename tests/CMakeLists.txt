@@ -22,6 +22,9 @@ target_sources(nme_tests PRIVATE
     test_midi_lifecycle.cpp
     test_synchronizer_new_module.cpp
     test_bank_backup_safety.cpp
+    test_mcp_event_log.cpp
+    test_mcp_rules.cpp
+    test_morph_assign_action.cpp
 
     # The units under test, pulled straight from the app tree
     ${CMAKE_SOURCE_DIR}/source/model/LightMeterLayout.cpp
@@ -56,6 +59,9 @@ target_sources(nme_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/source/protocol/SendControllerSnapshotMessage.cpp
     ${CMAKE_SOURCE_DIR}/source/protocol/KnobAssignmentMessage.cpp
     ${CMAKE_SOURCE_DIR}/source/protocol/MidiCtrlAssignmentMessage.cpp
+    ${CMAKE_SOURCE_DIR}/source/protocol/MorphAssignmentMessage.cpp
+    ${CMAKE_SOURCE_DIR}/source/protocol/MorphRangeChangeMessage.cpp
+    ${CMAKE_SOURCE_DIR}/source/mcp/McpEventLog.cpp
 )
 
 target_include_directories(nme_tests PRIVATE
@@ -75,6 +81,7 @@ target_compile_definitions(nme_tests PRIVATE
 target_link_libraries(nme_tests PRIVATE
     juce::juce_core
     juce::juce_events
+    juce::juce_data_structures   # juce::UndoManager, for the undo action tests
     juce::juce_audio_devices
     juce::juce_graphics    # Descriptors carry juce::Colour
     juce::juce_recommended_config_flags

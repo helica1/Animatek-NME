@@ -970,6 +970,18 @@ private:
                 }),
             assignments.end());
 
+        // The canvas and the inspector draw the morph from the parameter's own
+        // fields, which are only copied from morphAssignments when a patch is
+        // set. Keep them in step here, or an undo (or any caller that did not
+        // set them first, like the MCP bridge) leaves the two disagreeing.
+        if (section_ == 0 || section_ == 1)
+            if (auto* module = ctx_.patch.getContainer(section_).getModuleByIndex(moduleId_))
+                if (auto* param = module->getParameter(paramId_))
+                {
+                    param->setMorphGroup(group);
+                    param->setMorphRange(group >= 0 ? range : 0);
+                }
+
         if (group >= 0)
         {
             MorphAssignment ma;
@@ -1034,6 +1046,10 @@ private:
             if (ma.section == section_ && ma.module == moduleId_ && ma.param == paramId_)
             {
                 ma.range = signedRange;
+                // Same reason as MorphAssignAction: the drawing reads the parameter.
+                if (auto* module = ctx_.patch.getContainer(section_).getModuleByIndex(moduleId_))
+                    if (auto* param = module->getParameter(paramId_))
+                        param->setMorphRange(signedRange);
                 if (ctx_.connMgr.isConnected())
                 {
                     int pid = ctx_.connMgr.getPatchId(ctx_.slot);

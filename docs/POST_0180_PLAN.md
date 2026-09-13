@@ -436,6 +436,17 @@ that subset, audition it with the existing arrows, and reopen with everything in
 - [ ] Update both the C++ handler and `mcp-bridge/server.py`; verify UI and hardware
   results through the same integration tests as manual assignment.
 
+Progress, 2026-09-13 (branch `feature/mcp-synth-testing`, not merged): both halves are
+written. Knob, morph and MIDI CC assignment go through the existing undo actions; slot,
+section, module, parameter class, knob, group, range and CC are validated; a knob or CC in
+use is refused unless `replace` is passed; the 25-assignment morph limit is enforced;
+transfers in progress are refused. A first hardware pass the same day (G1, OS 3.03,
+scratch slot: build, notes, LEDs, knob/morph/CC assign, replace refusal, removal) made
+44 calls with no synth error or disconnect. Not done: LOCAL behaviour (it depends on S4)
+and the integration tests the third box asks for, which is why no box above is ticked. The same
+branch adds read-back tools (`get_synth_status`, `get_events`, `read_lights`) and
+`set_morph_value`/`play_note`, for testing against a real G1.
+
 ### M2. Grouped MCP Operations
 
 - [ ] Define a batch with explicit target slot and expected patch generation;
