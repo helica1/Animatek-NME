@@ -13,6 +13,11 @@ public:
     std::unique_ptr<Patch> readFile(const juce::File& file);
     bool writeFile(const Patch& patch, const juce::File& file);
 
+    // The .pch text of a patch, what writeFile() writes; and the reverse, for a host that
+    // keeps the patch text in its own state rather than in a file.
+    juce::String toText(const Patch& patch);
+    std::unique_ptr<Patch> fromText(const juce::String& text, const juce::String& name);
+
     // Nord Modular 2.10 text patches declare themselves in a Version= line
     // near the top of the file. Shared by readFile dispatch and the preset
     // browser so both agree on what counts as a legacy patch.

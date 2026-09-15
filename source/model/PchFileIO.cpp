@@ -155,9 +155,16 @@ bool PchFileIO::isLegacyPatch210(const juce::StringArray& lines)
 
 std::unique_ptr<Patch> PchFileIO::readFile(const juce::File& file)
 {
-    auto text = file.loadFileAsString();
+    return fromText(file.loadFileAsString(), patchNameFromFileName(file));
+}
+
+std::unique_ptr<Patch> PchFileIO::fromText(const juce::String& text, const juce::String& name)
+{
     if (text.isEmpty())
         return nullptr;
+
+    // legacy files carry their own name, 3.0 files take the given one
+    const juce::File file (juce::File::getCurrentWorkingDirectory().getChildFile(name + ".pch"));
 
     auto patch = std::make_unique<Patch>();
 
@@ -719,6 +726,11 @@ void PchFileIO::parseNameDump(const juce::StringArray& lines, Patch& patch)
 
 bool PchFileIO::writeFile(const Patch& patch, const juce::File& file)
 {
+    return file.replaceWithText(toText(patch));
+}
+
+juce::String PchFileIO::toText(const Patch& patch)
+{
     juce::String out;
 
     writeHeader(out, patch);
@@ -754,7 +766,7 @@ bool PchFileIO::writeFile(const Patch& patch, const juce::File& file)
     if (patch.patchNotes.isNotEmpty())
         writeNotes(out, patch);
 
-    return file.replaceWithText(out);
+    return out;
 }
 
 // --- Header ---
