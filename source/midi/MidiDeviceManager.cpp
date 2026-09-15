@@ -18,19 +18,51 @@ MidiDeviceManager::~MidiDeviceManager()
     disconnect();
 }
 
+static EmbeddedSynth* embeddedSynth = nullptr;
+
+void MidiDeviceManager::setEmbeddedSynth(EmbeddedSynth* synth)
+{
+    embeddedSynth = synth;
+}
+
+EmbeddedSynth* MidiDeviceManager::getEmbeddedSynth()
+{
+    return embeddedSynth;
+}
+
+static juce::Array<juce::MidiDeviceInfo> withEmbeddedSynth(juce::Array<juce::MidiDeviceInfo> devices)
+{
+    if (embeddedSynth != nullptr)
+        devices.insert(0, juce::MidiDeviceInfo(embeddedSynth->getName(), EmbeddedSynth::deviceId()));
+    return devices;
+}
+
 juce::Array<juce::MidiDeviceInfo> MidiDeviceManager::getAvailableInputDevices()
 {
-    return juce::MidiInput::getAvailableDevices();
+    return withEmbeddedSynth(juce::MidiInput::getAvailableDevices());
 }
 
 juce::Array<juce::MidiDeviceInfo> MidiDeviceManager::getAvailableOutputDevices()
 {
-    return juce::MidiOutput::getAvailableDevices();
+    return withEmbeddedSynth(juce::MidiOutput::getAvailableDevices());
 }
 
 bool MidiDeviceManager::connect(const juce::String& inputId, const juce::String& outputId)
 {
     disconnect();
+
+    if (inputId == EmbeddedSynth::deviceId() || outputId == EmbeddedSynth::deviceId())
+    {
+        if (embeddedSynth == nullptr)
+            return false;
+
+        embedded = embeddedSynth;
+        alive = std::make_shared<std::atomic<bool>>(true);
+        protocol.setSendFunction([this](const std::vector<uint8_t>& data) { sendSysEx(data); });
+        embedded->setReceiver([this](const juce::MidiMessage& message) { handleIncomingMidiMessage(nullptr, message); });
+        DBG("MIDI connected to the embedded synth " + embedded->getName());
+        return true;
+    }
 
     midiInput = juce::MidiInput::openDevice(inputId, this);
     midiOutput = juce::MidiOutput::openDevice(outputId);
@@ -53,6 +85,11 @@ void MidiDeviceManager::disconnect()
 {
     *alive = false;  // Invalidate received messages already posted to the UI thread.
     protocol.setSendFunction({});
+    if (embedded)
+    {
+        embedded->setReceiver(nullptr);
+        embedded = nullptr;
+    }
     if (midiInput)
     {
         midiInput->stop();
@@ -65,6 +102,13 @@ void MidiDeviceManager::sendSysEx(const std::vector<uint8_t>& data)
 {
     // data already contains the full SysEx frame (F0 ... F7) from SysEx::encode(),
     // so construct MidiMessage directly — createSysExMessage would double-wrap.
+    if (embedded && !data.empty())
+    {
+        MidiMonitor::instance().record(MidiMonitor::Direction::Tx, data.data(), data.size());
+        embedded->sendToSynth(data);
+        return;
+    }
+
     if (midiOutput && !data.empty())
     {
 #if JUCE_DEBUG
@@ -81,11 +125,13 @@ void MidiDeviceManager::sendSysEx(const std::vector<uint8_t>& data)
 
 juce::String MidiDeviceManager::getInputDeviceName() const
 {
+    if (embedded) return embedded->getName();
     return midiInput ? midiInput->getName() : juce::String();
 }
 
 juce::String MidiDeviceManager::getOutputDeviceName() const
 {
+    if (embedded) return embedded->getName();
     return midiOutput ? midiOutput->getName() : juce::String();
 }
 
