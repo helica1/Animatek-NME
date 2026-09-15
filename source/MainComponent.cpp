@@ -953,7 +953,10 @@ MainComponent::MainComponent(juce::ApplicationProperties &props)
 #endif
 
 #if JUCE_MAC
-  juce::MenuBarModel::setMacMainMenu(this);
+  // Only the standalone app owns the Mac menu bar. Hosted in a plugin, taking
+  // it would replace the DAW's menu; the host window shows a menu bar instead.
+  if (juce::JUCEApplicationBase::isStandaloneApp())
+    juce::MenuBarModel::setMacMainMenu(this);
 #endif
 }
 
@@ -1001,7 +1004,8 @@ MainComponent::~MainComponent() {
 
   // Tear down UI before members are destroyed
 #if JUCE_MAC
-  juce::MenuBarModel::setMacMainMenu(nullptr);
+  if (juce::JUCEApplicationBase::isStandaloneApp())
+    juce::MenuBarModel::setMacMainMenu(nullptr);
 #endif
   // The slot chooser and the store-location dialog live on the desktop and are
   // owned by nobody, so quitting with one still open leaked it and printed an
@@ -1470,7 +1474,9 @@ void MainComponent::menuItemSelected(int menuItemID, int) {
     showEditorOptionsDialog();
     break;
   case 10:
-    juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    // File > Quit: nothing to quit when the editor is hosted inside a plugin
+    if (auto* app = juce::JUCEApplication::getInstance())
+      app->systemRequestedQuit();
     break;
   case 20:
     runUndoRestoringSelection(activeSlot, /*redo=*/false);
